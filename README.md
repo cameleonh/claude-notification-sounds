@@ -18,11 +18,17 @@ irm https://raw.githubusercontent.com/cameleonh/claude-notification-sounds/main/
 
 설치 중에 사운드를 선택할 수 있습니다!
 
+## 제거
+
+```powershell
+irm https://raw.githubusercontent.com/cameleonh/claude-notification-sounds/main/uninstall.ps1 | iex
+```
+
 ## 수동 설치
 
 ### 1. 저장소 클론
 ```bash
-git clone https://github.com/your-username/claude-notification-sounds.git
+git clone https://github.com/cameleonh/claude-notification-sounds.git
 cd claude-notification-sounds
 ```
 
@@ -105,7 +111,7 @@ Copy-Item skills\notification-toggle\SKILL.md "$env:USERPROFILE\.claude\skills\n
 `hooks/stop.ps1` 또는 `hooks/notification.ps1` 파일에서 사운드 파일명을 변경:
 
 ```powershell
-$SoundPath = "C:\Users\YOUR_USERNAME\.claude\hooks\notification-sounds\sounds\fbi.mp3"
+$SoundPath = "$env:USERPROFILE\.claude\hooks\notification-sounds\sounds\fbi.mp3"
 ```
 
 ## 파일 구조
@@ -113,6 +119,9 @@ $SoundPath = "C:\Users\YOUR_USERNAME\.claude\hooks\notification-sounds\sounds\fb
 ```
 claude-notification-sounds/
 ├── README.md
+├── LICENSE
+├── install.ps1            # 설치 스크립트
+├── uninstall.ps1          # 제거 스크립트
 ├── hooks/
 │   ├── stop.ps1           # 작업 완료 사운드
 │   ├── notification.ps1   # 권한 요청 사운드

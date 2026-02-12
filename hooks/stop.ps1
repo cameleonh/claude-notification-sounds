@@ -1,6 +1,6 @@
 # Stop Hook - Claude finished working - Meme Sound
 $ErrorActionPreference = "SilentlyContinue"
-$SoundPath = "C:\Users\honey\.claude\hooks\notification-sounds\sounds\fbi.mp3"
+$SoundPath = "$env:USERPROFILE\.claude\hooks\notification-sounds\sounds\fbi.mp3"
 
 if (Test-Path $SoundPath) {
     Add-Type -AssemblyName presentationCore

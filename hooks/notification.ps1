@@ -1,6 +1,6 @@
 # Notification Hook - Permission request, user input needed
 $ErrorActionPreference = "SilentlyContinue"
-$SoundPath = "C:\Users\honey\.claude\hooks\notification-sounds\sounds\bruh.mp3"
+$SoundPath = "$env:USERPROFILE\.claude\hooks\notification-sounds\sounds\bruh.mp3"
 
 if (Test-Path $SoundPath) {
     Add-Type -AssemblyName presentationCore
