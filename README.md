@@ -8,7 +8,17 @@ Claude Code 작업 완료 및 권한 요청 시 밈 사운드로 알려주는 Wi
 - **권한 요청/선택지** → Bruh 😐
 - `/notification-toggle` 명령어로 ON/OFF
 
-## 설치
+## 빠른 설치
+
+PowerShell에서 한 줄로 설치:
+
+```powershell
+irm https://raw.githubusercontent.com/cameleonh/claude-notification-sounds/main/install.ps1 | iex
+```
+
+설치 중에 사운드를 선택할 수 있습니다!
+
+## 수동 설치
 
 ### 1. 저장소 클론
 ```bash
