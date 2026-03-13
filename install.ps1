@@ -9,6 +9,183 @@ $ErrorActionPreference = "Stop"
 $RepoUrl = "https://raw.githubusercontent.com/cameleonh/claude-notification-sounds/main"
 $InstallDir = "$env:USERPROFILE\.claude\hooks\notification-sounds"
 $SkillDir = "$env:USERPROFILE\.claude\skills\notification-toggle"
+$SettingsPath = "$env:USERPROFILE\.claude\settings.json"
+
+function Invoke-Download {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Destination
+    )
+
+    $requestParams = @{
+        Uri = $Uri
+        OutFile = $Destination
+    }
+
+    if ((Get-Command Invoke-WebRequest).Parameters.ContainsKey("UseBasicParsing")) {
+        $requestParams.UseBasicParsing = $true
+    }
+
+    Invoke-WebRequest @requestParams
+}
+
+function Read-SoundChoice {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Prompt,
+
+        [Parameter(Mandatory = $true)]
+        [int]$DefaultChoice
+    )
+
+    while ($true) {
+        $choice = Read-Host $Prompt
+        if ([string]::IsNullOrWhiteSpace($choice)) {
+            return $DefaultChoice
+        }
+
+        if ($choice -match "^\d+$") {
+            $number = [int]$choice
+            if ($number -ge 1 -and $number -le 10) {
+                return $number
+            }
+        }
+
+        Write-Host "Please enter a number between 1 and 10." -ForegroundColor Yellow
+    }
+}
+
+function Get-SettingsObject {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        return [pscustomobject]@{}
+    }
+
+    try {
+        return Get-Content $Path -Raw | ConvertFrom-Json
+    } catch {
+        throw "Failed to parse $Path. Fix the JSON and run the installer again."
+    }
+}
+
+function Get-OrCreate-HooksObject {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Settings
+    )
+
+    if (-not ($Settings.PSObject.Properties.Name -contains "hooks")) {
+        $Settings | Add-Member -NotePropertyName "hooks" -NotePropertyValue ([pscustomobject]@{})
+    }
+
+    return $Settings.hooks
+}
+
+function Get-HookCommandString {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ScriptName
+    )
+
+    return "powershell -ExecutionPolicy Bypass -File `"$InstallDir\$ScriptName`""
+}
+
+function Add-OrUpdate-HookCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Settings,
+
+        [Parameter(Mandatory = $true)]
+        [string]$EventName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ScriptName
+    )
+
+    $hooksObject = Get-OrCreate-HooksObject -Settings $Settings
+    $command = Get-HookCommandString -ScriptName $ScriptName
+    $eventEntries = @()
+
+    if ($hooksObject.PSObject.Properties.Name -contains $EventName) {
+        $eventEntries = @($hooksObject.$EventName)
+    }
+
+    $matcherEntry = $eventEntries | Where-Object { $_.matcher -eq "" } | Select-Object -First 1
+    if ($null -eq $matcherEntry) {
+        $matcherEntry = [pscustomobject]@{
+            matcher = ""
+            hooks = @()
+        }
+        $eventEntries += $matcherEntry
+    }
+
+    $hookList = @()
+    if ($matcherEntry.PSObject.Properties.Name -contains "hooks") {
+        $hookList = @($matcherEntry.hooks)
+    }
+
+    $hookList = @($hookList | Where-Object { $_.command -ne $command })
+    $hookList += [pscustomobject]@{
+        type = "command"
+        command = $command
+        timeout = 5
+    }
+
+    $matcherEntry.hooks = $hookList
+
+    if ($hooksObject.PSObject.Properties.Name -contains $EventName) {
+        $hooksObject.PSObject.Properties.Remove($EventName)
+    }
+
+    $hooksObject | Add-Member -NotePropertyName $EventName -NotePropertyValue $eventEntries -Force
+}
+
+function Save-SettingsObject {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Settings,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $Settings | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 $Path
+}
+
+function New-InitialState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$StopSound,
+
+        [Parameter(Mandatory = $true)]
+        [string]$NotificationSound
+    )
+
+    return [pscustomobject]@{
+        version = 1
+        volume = 0.5
+        paused = $false
+        categories = [pscustomobject]@{
+            stop = $true
+            notification = $true
+            session = $false
+            prompt = $false
+        }
+        sounds = [pscustomobject]@{
+            stop = "$StopSound.mp3"
+            notification = "$NotificationSound.mp3"
+            session = $null
+            prompt = $null
+        }
+    }
+}
 
 # Banner
 Write-Host ""
@@ -18,7 +195,6 @@ Write-Host "  Windows Installer" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Check prerequisites
 if (-not (Test-Path "$env:USERPROFILE\.claude")) {
     Write-Host "Error: ~/.claude/ not found. Is Claude Code installed?" -ForegroundColor Red
     exit 1
@@ -31,11 +207,11 @@ New-Item -ItemType Directory -Force -Path $SkillDir | Out-Null
 
 # Download hook scripts
 Write-Host "Downloading hook scripts..." -ForegroundColor Yellow
-$Scripts = @("stop.ps1", "notification.ps1", "session-start.ps1", "prompt-submit.ps1", "toggle.ps1")
+$Scripts = @("common.ps1", "stop.ps1", "notification.ps1", "session-start.ps1", "prompt-submit.ps1", "toggle.ps1")
 foreach ($Script in $Scripts) {
     $Url = "$RepoUrl/hooks/$Script"
     $Dest = "$InstallDir\$Script"
-    Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing
+    Invoke-Download -Uri $Url -Destination $Dest
     Write-Host "  - $Script" -ForegroundColor Green
 }
 
@@ -46,7 +222,7 @@ foreach ($Sound in $Sounds) {
     $Url = "$RepoUrl/sounds/$Sound"
     $Dest = "$InstallDir\sounds\$Sound"
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing
+        Invoke-Download -Uri $Url -Destination $Dest
         Write-Host "  - $Sound" -ForegroundColor Green
     } catch {
         Write-Host "  - $Sound (skipped)" -ForegroundColor DarkGray
@@ -55,7 +231,7 @@ foreach ($Sound in $Sounds) {
 
 # Download skill
 Write-Host "Downloading toggle skill..." -ForegroundColor Yellow
-Invoke-WebRequest -Uri "$RepoUrl/skills/notification-toggle/SKILL.md" -OutFile "$SkillDir\SKILL.md" -UseBasicParsing
+Invoke-Download -Uri "$RepoUrl/skills/notification-toggle/SKILL.md" -Destination "$SkillDir\SKILL.md"
 Write-Host "  - SKILL.md" -ForegroundColor Green
 
 # Ask user for sound preferences
@@ -78,80 +254,35 @@ Write-Host "  9. hell-nah   - Hell Nah!" -ForegroundColor White
 Write-Host " 10. airhorn    - Air Horn" -ForegroundColor White
 Write-Host ""
 
-# Work complete sound
-$StopChoice = Read-Host "Work complete sound (1-10, default=1)"
-if ([string]::IsNullOrWhiteSpace($StopChoice)) { $StopChoice = "1" }
-$StopSounds = @("fbi", "vine-boom", "nice", "wow", "bruh", "oof", "damn", "yeet", "hell-nah", "airhorn")
-$StopSound = $StopSounds[[int]$StopChoice - 1]
+$SoundNames = @("fbi", "vine-boom", "nice", "wow", "bruh", "oof", "damn", "yeet", "hell-nah", "airhorn")
 
-# Notification sound
-$NotifChoice = Read-Host "Permission request sound (1-10, default=5)"
-if ([string]::IsNullOrWhiteSpace($NotifChoice)) { $NotifChoice = "5" }
-$NotifSound = $StopSounds[[int]$NotifChoice - 1]
+$StopChoice = Read-SoundChoice -Prompt "Work complete sound (1-10, default=1)" -DefaultChoice 1
+$NotificationChoice = Read-SoundChoice -Prompt "Permission request sound (1-10, default=5)" -DefaultChoice 5
+$StopSound = $SoundNames[$StopChoice - 1]
+$NotificationSound = $SoundNames[$NotificationChoice - 1]
 
-# Update scripts with chosen sounds
 Write-Host ""
-Write-Host "Configuring sounds..." -ForegroundColor Yellow
-(Get-Content "$InstallDir\stop.ps1") -replace 'sounds\\.*\.mp3', "sounds\$StopSound.mp3" | Set-Content "$InstallDir\stop.ps1"
-(Get-Content "$InstallDir\notification.ps1") -replace 'sounds\\.*\.mp3', "sounds\$NotifSound.mp3" | Set-Content "$InstallDir\notification.ps1"
+Write-Host "Saving sound settings..." -ForegroundColor Yellow
+$InitialState = New-InitialState -StopSound $StopSound -NotificationSound $NotificationSound
+$InitialState | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $InstallDir ".state.json")
 Write-Host "  - Work complete: $StopSound" -ForegroundColor Green
-Write-Host "  - Permission request: $NotifSound" -ForegroundColor Green
+Write-Host "  - Permission request: $NotificationSound" -ForegroundColor Green
 
-# Update settings.json
+# Update settings.json without clobbering unrelated hooks
 Write-Host ""
 Write-Host "Updating Claude Code settings..." -ForegroundColor Yellow
-$SettingsPath = "$env:USERPROFILE\.claude\settings.json"
-$Username = $env:USERNAME
-
-if (Test-Path $SettingsPath) {
-    $Settings = Get-Content $SettingsPath | ConvertFrom-Json
-} else {
-    $Settings = @{}
-}
-
-# Add hooks
-$Hooks = @{
-    Stop = @(
-        @{
-            matcher = ""
-            hooks = @(
-                @{
-                    type = "command"
-                    command = "powershell -ExecutionPolicy Bypass -File `"C:\Users\$Username\.claude\hooks\notification-sounds\stop.ps1`""
-                    timeout = 5
-                }
-            )
-        }
-    )
-    Notification = @(
-        @{
-            matcher = ""
-            hooks = @(
-                @{
-                    type = "command"
-                    command = "powershell -ExecutionPolicy Bypass -File `"C:\Users\$Username\.claude\hooks\notification-sounds\notification.ps1`""
-                    timeout = 5
-                }
-            )
-        }
-    )
-}
-
-$Settings | Add-Member -NotePropertyName "hooks" -NotePropertyValue $Hooks -Force
-$Settings | ConvertTo-Json -Depth 10 | Set-Content $SettingsPath
-Write-Host "  - Hooks registered" -ForegroundColor Green
+$Settings = Get-SettingsObject -Path $SettingsPath
+Add-OrUpdate-HookCommand -Settings $Settings -EventName "Stop" -ScriptName "stop.ps1"
+Add-OrUpdate-HookCommand -Settings $Settings -EventName "Notification" -ScriptName "notification.ps1"
+Save-SettingsObject -Settings $Settings -Path $SettingsPath
+Write-Host "  - Hooks registered without overwriting existing settings" -ForegroundColor Green
 
 # Test sound
 Write-Host ""
 Write-Host "Testing sound..." -ForegroundColor Yellow
-Add-Type -AssemblyName presentationCore
-$TestPlayer = New-Object System.Windows.Media.MediaPlayer
-$TestPlayer.Open("$InstallDir\sounds\$StopSound.mp3")
-$TestPlayer.Volume = 0.5
-$TestPlayer.Play()
-Start-Sleep -Milliseconds 2000
-$TestPlayer.Close()
-Write-Host "  - Sound works!" -ForegroundColor Green
+. "$InstallDir\common.ps1"
+Play-NotificationSound -Category "stop" -FallbackFile "fbi.mp3" -DurationMs 1500
+Write-Host "  - Sound playback attempted" -ForegroundColor Green
 
 # Done
 Write-Host ""
@@ -161,7 +292,7 @@ Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Sounds:" -ForegroundColor White
 Write-Host "  - Work complete: $StopSound" -ForegroundColor Cyan
-Write-Host "  - Permission request: $NotifSound" -ForegroundColor Cyan
+Write-Host "  - Permission request: $NotificationSound" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Commands:" -ForegroundColor White
 Write-Host "  /notification-toggle  - Toggle sounds ON/OFF" -ForegroundColor Cyan

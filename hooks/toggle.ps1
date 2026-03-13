@@ -1,18 +1,14 @@
 # Toggle sounds on/off
-$StatePath = "$env:USERPROFILE\.claude\hooks\notification-sounds\.state.json"
+$ErrorActionPreference = "Stop"
 
-if (Test-Path $StatePath) {
-    $State = Get-Content $StatePath | ConvertFrom-Json
-} else {
-    $State = @{}
-}
+. "$PSScriptRoot\common.ps1"
 
-if ($State.paused -eq $true) {
-    $State.paused = $false
-    Write-Host "Sound notifications: ON"
-} else {
-    $State.paused = $true
+$state = Get-NotificationSoundConfig
+$state.paused = -not [bool]$state.paused
+Save-NotificationSoundConfig -Config $state
+
+if ($state.paused) {
     Write-Host "Sound notifications: OFF"
+} else {
+    Write-Host "Sound notifications: ON"
 }
-
-$State | ConvertTo-Json | Set-Content $StatePath

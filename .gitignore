@@ -13,5 +13,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Local runtime state
 .state.json
 config.json
